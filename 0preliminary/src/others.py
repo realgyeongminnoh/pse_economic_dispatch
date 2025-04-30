@@ -32,6 +32,7 @@ class Others:
         self.total_demands =  np.array(data_demands).reshape(-1) # demands; len(demands) == 365 * 24 == 8760
 
     def Get_renewable_capacity(self):
+        self.count = 197 
         zeroArrays = np.zeros(197)
         with open(self.basics.getcwd.split("src")[0] + "data/inputs/renewables_capacity/solar_generators_2022.csv") as f:
             data_raw_solar = np.array([row for row in csv.reader(f)])[1:, [0, 2]].astype(float)

@@ -11,4 +11,4 @@ class Thermal:
         self.c1 = None
         self.c0 = None
         self.pmin = None
-        self.pamx = None
+        self.pmax = None

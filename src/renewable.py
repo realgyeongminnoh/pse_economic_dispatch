@@ -1,5 +1,6 @@
 class Renewable:
     def __init__(self):
+        self.count: int = None
         # 197 buses
         self.solar_capacity = None
         self.wind_capacity = None

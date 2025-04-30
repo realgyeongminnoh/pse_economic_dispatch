@@ -1,5 +1,5 @@
-import os
 import csv
+from pathlib import Path
 import numpy as np
 from scipy.io import loadmat
 
@@ -7,19 +7,18 @@ from scipy.io import loadmat
 class Data:
     def __init__(self):
         self.thermal_count: int = None
-        self.dotcsv = ".csv"
-        self.path = os.path.abspath(__file__).split("/src/data.py")[0] + "/data"
-        self.path_kpg = self.path + "/inputs/KPG193_ver1_2"
+        self.path_data = Path(__file__).resolve().parents[1] / "data"
+        self.path_kpg = self.path_data / "inputs" / "KPG193_ver1_2"
 
-    
+
     def get_path_files(self, folder, file):
-        path = f"{self.path_kpg}/profile/{folder}/{file}_"
-        return [(f"{path}{i}{self.dotcsv}") for i in range(1, 366)]
+        base = self.path_kpg / "profile" / folder
+        return [base / f"{file}_{i}.csv" for i in range(1, 366)]
 
     
     def load_thermal(self, thermal):
-        raw_thermal = loadmat(self.path_kpg + "/network/mat/KPG193_ver1_2.mat")["mpc"][0, 0]
-        # 0 = coal = red; 1 = lng = blue; 2 = nuclear = green
+        raw_thermal = loadmat(self.path_kpg / "network" / "mat" / "KPG193_ver1_2.mat")["mpc"][0, 0]
+        # 0 = coal = red; 1 = lng = blue; 2 = nuclear = green; extracted from m file
         thermal.fueltype = np.array([0, 0, 0, 1, 0, 0, 0, 1, 1, 0, 0, 1, 1, 1, 1, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 2, 2, 2, 2, 2, 2, 2, 1, 1, 1, 1, 0, 0, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 1, 0, 0, 0, 0, 0, 0, 1, 1, 1, 0, 0, 0, 0, 0, 1, 1, 1, 0, 1, 0, 0, 0, 0, 0, 0, 2, 2, 2, 2, 2, 1, 1, 1, 2, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1], dtype=np.uint8)
         thermal.fuelcolor = np.array([[1, 0, 0], [0, 0, 1], [0, 1, 0]], dtype=np.uint8)[thermal.fueltype]
         thermal.idx_coal = np.where(thermal.fueltype == 0)[0]
@@ -30,32 +29,34 @@ class Data:
         thermal.c1 = raw_thermal["gencost"][:, 5]
         thermal.c0 = raw_thermal["gencost"][:, 6]
         thermal.pmin = raw_thermal["gen"][:, 9]
-        thermal.pamx = raw_thermal["gen"][:, 8]
+        thermal.pmax = raw_thermal["gen"][:, 8]
         thermal.count = len(thermal.pmin)
         self.thermal_count = thermal.count
 
     
     def load_renewable_capacity(self, renewable):
-        # 197 buses
+        renewable.count = 197
+        # 197 buses (IDK WHY the paper says 193 buses maybe version 2? below REG has 197 buses for all 365 csv so im going with 197)
         # busid 119, 164, 185, 186 missing; solar capacity for these busid is assumed to be 0
-        with open(self.path_kpg + "/renewables_capacity/solar_generators_2022.csv") as csvfile:
+        with open(self.path_kpg / "renewables_capacity" /"solar_generators_2022.csv") as csvfile:
             raw_solar = np.array([row for row in csv.reader(csvfile)])[1:, [0, 2]].astype(float)
-        renewable.solar_capacity = np.zeros(197)
+        renewable.solar_capacity = np.zeros(renewable.count)
         renewable.solar_capacity[raw_solar[:, 0].astype(int) -1] = raw_solar[:, 1]
 
         # same busid 119, 164, 185, 186 missing; the capacity for these busid is assumed to be 0
-        with open(self.path_kpg + "/renewables_capacity/wind_generators_2022.csv") as csvfile:
+        with open(self.path_kpg / "renewables_capacity" / "wind_generators_2022.csv") as csvfile:
             raw_wind = np.array([row for row in csv.reader(csvfile)])[1:, [0, 2]].astype(float)
-        renewable.wind_capacity = np.zeros(197)
+        renewable.wind_capacity = np.zeros(renewable.count)
         renewable.wind_capacity[raw_wind[:, 0].astype(int) -1] = raw_wind[:, 1]
 
-        # hydro capacity data is okay, full renewable 197 busid, all 0 pmin (4 empy pmin = 0)
-        with open(self.path_kpg + "/renewables_capacity/hydro_generators_2022.csv") as csvfile:
+        # hydro capacity data is okay, full renewable 197 busid, all 0 pmin (4 empy pmin = 0) 
+        # also busid 197 has 400 max so 197 buses are probably intended
+        with open(self.path_kpg / "renewables_capacity" / "hydro_generators_2022.csv") as csvfile:
             renewable.hydro_capacity = np.array([row for row in csv.reader(csvfile)])[1:, 2].astype(float)
 
     
     def load_renewable_generation(self, renewable):
-        solar_ratio, wind_ratio, hydro_ratio = np.zeros((197, 8760)), np.zeros((197, 8760)), np.zeros((197, 8760))
+        solar_ratio, wind_ratio, hydro_ratio = np.zeros((8760, renewable.count)), np.zeros((8760, renewable.count)), np.zeros((8760, renewable.count))
 
         for idx_hour, file in zip(np.arange(0, 365 * 24, 24), self.get_path_files("renewables", "renewables")):
             with open(file) as csvfile:
@@ -77,18 +78,18 @@ class Data:
                 
                 idx_hour += raw[:, 0].astype(int)
                 idx_bus = raw[:, 1].astype(int)
-                solar_ratio[idx_bus, idx_hour] = raw[:, 2]
-                wind_ratio[idx_bus, idx_hour] = raw[:, 3]
-                hydro_ratio[idx_bus, idx_hour] = raw[:, 4]
+                solar_ratio[idx_hour, idx_bus] = raw[:, 2]
+                wind_ratio[idx_hour, idx_bus] = raw[:, 3]
+                hydro_ratio[idx_hour, idx_bus] = raw[:, 4]
 
         # 8760 hours, 197 buses
-        renewable.solar_generation = renewable.solar_capacity[:, None] * solar_ratio
-        renewable.wind_generation = renewable.wind_capacity[:, None] * wind_ratio
-        renewable.hydro_generation = renewable.hydro_capacity[:, None] * hydro_ratio
+        renewable.solar_generation = solar_ratio * renewable.solar_capacity
+        renewable.wind_generation = wind_ratio * renewable.wind_capacity
+        renewable.hydro_generation = hydro_ratio * renewable.hydro_capacity
         # 8760 hours
-        renewable.total_solar_generation = renewable.solar_generation.sum(axis=0)
-        renewable.total_wind_generation = renewable.wind_generation.sum(axis=0)
-        renewable.total_hydro_generation = renewable.hydro_generation.sum(axis=0)
+        renewable.total_solar_generation = renewable.solar_generation.sum(axis=1)
+        renewable.total_wind_generation = renewable.wind_generation.sum(axis=1)
+        renewable.total_hydro_generation = renewable.hydro_generation.sum(axis=1)
         renewable.total_generation = renewable.total_solar_generation + renewable.total_wind_generation + renewable.total_hydro_generation
 
     
