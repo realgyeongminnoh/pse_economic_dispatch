@@ -56,7 +56,7 @@ class Data:
 
     
     def load_renewable_generation(self, renewable):
-        solar_ratio, wind_ratio, hydro_ratio = np.zeros((8760, renewable.count)), np.zeros((8760, renewable.count)), np.zeros((8760, renewable.count))
+        solar_ratio, wind_ratio, hydro_ratio = np.empty((8760, renewable.count)), np.empty((8760, renewable.count)), np.empty((8760, renewable.count))
 
         for idx_hour, file in zip(np.arange(0, 365 * 24, 24), self.get_path_files("renewables", "renewables")):
             with open(file) as csvfile:
@@ -104,7 +104,7 @@ class Data:
 
 
     def load_commitment_decision(self, commitment):
-        decision = np.zeros((8760, self.thermal_count), dtype=bool)
+        decision = np.empty((8760, self.thermal_count), dtype=bool)
 
         for idx_hour, file in zip(np.arange(0, 365 * 24, 24), self.get_path_files("commitment_decision", "commitment_decision")):
             with open(file) as csvfile:
