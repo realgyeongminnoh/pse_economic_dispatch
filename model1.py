@@ -1,7 +1,7 @@
 import os
+import csv
 import numpy as np
 from concurrent.futures import ProcessPoolExecutor
-
 from src import *
 
 
@@ -14,13 +14,13 @@ def main():
     global thermal, renewable, demand, commitment, results
     data = Data()
     thermal = Thermal()
-    data.load_thermal(thermal)
     renewable = Renewable()
+    demand = Demand()
+    commitment = Commitment()
+    data.load_thermal(thermal)
     data.load_renewable_capacity(renewable)
     data.load_renewable_generation(renewable)
-    demand = Demand()
     data.load_demand(demand)
-    commitment = Commitment()
     data.load_commitment_decision(commitment)
     results = Results(thermal, renewable, commitment)   
 

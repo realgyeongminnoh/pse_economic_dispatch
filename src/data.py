@@ -1,3 +1,4 @@
+import gc
 import csv
 from pathlib import Path
 import numpy as np
@@ -35,34 +36,36 @@ class Data:
 
     
     def load_renewable_capacity(self, renewable):
-        renewable.count = 197
-        # 197 buses (IDK WHY the paper says 193 buses maybe version 2? below REG has 197 buses for all 365 csv so im going with 197)
-        # busid 119, 164, 185, 186 missing; solar capacity for these busid is assumed to be 0
         with open(self.path_kpg / "renewables_capacity" /"solar_generators_2022.csv") as csvfile:
             raw_solar = np.array([row for row in csv.reader(csvfile)])[1:, [0, 2]].astype(float)
-        renewable.solar_capacity = np.zeros(renewable.count)
-        renewable.solar_capacity[raw_solar[:, 0].astype(int) -1] = raw_solar[:, 1]
+        solar_idx_from_raw = np.where(raw_solar[:, 1] > 0)[0]
+        renewable.solar_idx_bus = (raw_solar[solar_idx_from_raw][:, 0] - 1).astype(int) 
+        renewable.solar_capacity = raw_solar[solar_idx_from_raw][:, 1]
+        renewable.solar_count = len(renewable.solar_capacity)
 
-        # same busid 119, 164, 185, 186 missing; the capacity for these busid is assumed to be 0
         with open(self.path_kpg / "renewables_capacity" / "wind_generators_2022.csv") as csvfile:
-            raw_wind = np.array([row for row in csv.reader(csvfile)])[1:, [0, 2]].astype(float)
-        renewable.wind_capacity = np.zeros(renewable.count)
-        renewable.wind_capacity[raw_wind[:, 0].astype(int) -1] = raw_wind[:, 1]
+            raw_wind = np.array([row for row in csv.reader(csvfile)])[1:, [0, 2]].astype(float)    
+        wind_idx_from_raw = np.where(raw_wind[:, 1] > 0)[0]
+        renewable.wind_idx_bus = (raw_wind[wind_idx_from_raw][:, 0] - 1).astype(int) 
+        renewable.wind_capacity = raw_wind[wind_idx_from_raw][:, 1]
+        renewable.wind_count = len(renewable.wind_capacity)
 
-        # hydro capacity data is okay, full renewable 197 busid, all 0 pmin (4 empy pmin = 0) 
-        # also busid 197 has 400 max so 197 buses are probably intended
         with open(self.path_kpg / "renewables_capacity" / "hydro_generators_2022.csv") as csvfile:
-            renewable.hydro_capacity = np.array([row for row in csv.reader(csvfile)])[1:, 2].astype(float)
+            raw_hydro = np.array([row for row in csv.reader(csvfile)])[1:, [0, 2]].astype(float)
+        hydro_idx_from_raw = np.where(raw_hydro[:, 1] > 0)[0]
+        renewable.hydro_idx_bus = (raw_hydro[hydro_idx_from_raw][:, 0] - 1).astype(int) 
+        renewable.hydro_capacity = raw_hydro[hydro_idx_from_raw][:, 1]
+        renewable.hydro_count = len(renewable.hydro_capacity)
 
     
     def load_renewable_generation(self, renewable):
-        solar_ratio, wind_ratio, hydro_ratio = np.empty((8760, renewable.count)), np.empty((8760, renewable.count)), np.empty((8760, renewable.count))
+        solar_ratio, wind_ratio, hydro_ratio = np.empty((8760, renewable.max_count)), np.empty((8760, renewable.max_count)), np.empty((8760, renewable.max_count))
 
         for idx_hour, file in zip(np.arange(0, 365 * 24, 24), self.get_path_files("renewables", "renewables")):
             with open(file) as csvfile:
                 reader = csv.reader(csvfile)
                 next(reader)
-                raw = np.array([[float(cell) if cell else 0 for cell in row] for row in reader]) # empty cell correction
+                raw = np.array([[float(cell) if cell else 0 for cell in row] for row in reader]) # csv empty cell correction
                 raw[:, [0, 1]] -= 1 # 0-indexing hour and busid
 
                 # please check KPG profile/renewables
@@ -82,25 +85,27 @@ class Data:
                 wind_ratio[idx_hour, idx_bus] = raw[:, 3]
                 hydro_ratio[idx_hour, idx_bus] = raw[:, 4]
 
-        # 8760 hours, 197 buses
-        renewable.solar_generation = solar_ratio * renewable.solar_capacity
-        renewable.wind_generation = wind_ratio * renewable.wind_capacity
-        renewable.hydro_generation = hydro_ratio * renewable.hydro_capacity
-        # 8760 hours
+        renewable.solar_generation = solar_ratio[:, renewable.solar_idx_bus] * renewable.solar_capacity
+        renewable.wind_generation = wind_ratio[:, renewable.wind_idx_bus] * renewable.wind_capacity
+        renewable.hydro_generation = hydro_ratio[:, renewable.hydro_idx_bus] * renewable.hydro_capacity
+
         renewable.total_solar_generation = renewable.solar_generation.sum(axis=1)
         renewable.total_wind_generation = renewable.wind_generation.sum(axis=1)
         renewable.total_hydro_generation = renewable.hydro_generation.sum(axis=1)
         renewable.total_generation = renewable.total_solar_generation + renewable.total_wind_generation + renewable.total_hydro_generation
+        
+        del renewable.solar_idx_bus, renewable.wind_idx_bus, renewable.hydro_idx_bus
+        gc.collect() # all Renewable, Results checked with previous version using above at every step
 
-    
+
     def load_demand(self, demand):
         demand_total = []
         for file in self.get_path_files("demand", "daily_demand"):
             with open(file) as csvfile:
                 raw_demand = np.array([row for row in csv.reader(csvfile)])[1:, :-1].astype(float)
                 demand_total.append([raw_demand[raw_demand[:, 0] == hour][:, -1].sum() for hour in range(1, 25)])
-        # 8760 hours
-        demand.total = np.array(demand_total).reshape(-1)
+        
+        demand.total = np.array(demand_total).reshape(-1) # 8760 hours
 
 
     def load_commitment_decision(self, commitment):
@@ -111,11 +116,10 @@ class Data:
                 reader = csv.reader(csvfile)
                 next(reader)
                 raw_commit = np.array([[int(cell) for cell in row] for row in reader])
-                raw_commit[:, [0, 1]] -= 1 # 0-indexin hour and generatorid
+                raw_commit[:, [0, 1]] -= 1 # 0-indexing hour and generatorid
 
                 idx_hour += raw_commit[:, 0]
                 idx_generator = raw_commit[:, 1]
                 decision[idx_hour, idx_generator] = raw_commit[:, 2]
 
-        # 8670 hours, 122 generators
-        commitment.decision = decision
+        commitment.decision = decision # 8670 hours, 122 generators

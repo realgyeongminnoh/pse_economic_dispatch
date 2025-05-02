@@ -24,18 +24,18 @@ class Solver:
         model = gp.Model()
         model.setParam("OutputFlag", 0)
 
-        # varaible declaration with min max bounds (implicit inequality constraints)
+        # varaible declaration with min max bounds (inequality constraints applied implicitly in Gurobi model)
         p_thermal = model.addVars(self.thermal.count, lb=(self.thermal.pmin * hourly_decision).tolist(), ub=(self.thermal.pmax * hourly_decision).tolist())
-        p_solar = model.addVars(self.renewable.count, lb=0, ub=self.renewable.solar_generation[idx_hour].tolist())
-        p_wind = model.addVars(self.renewable.count, lb=0, ub=self.renewable.wind_generation[idx_hour].tolist())
-        p_hydro = model.addVars(self.renewable.count, lb=0, ub=self.renewable.hydro_generation[idx_hour].tolist())
+        p_solar = model.addVars(self.renewable.solar_count, lb=0, ub=self.renewable.solar_generation[idx_hour].tolist())
+        p_wind = model.addVars(self.renewable.wind_count, lb=0, ub=self.renewable.wind_generation[idx_hour].tolist())
+        p_hydro = model.addVars(self.renewable.hydro_count, lb=0, ub=self.renewable.hydro_generation[idx_hour].tolist())
         
         # equality constraint declaration
         model.addConstr(
-            gp.quicksum(p_thermal[g] for g in range(self.thermal.count)) +   # sum of p_thermal
-            gp.quicksum(p_solar[b] for b in range(self.renewable.count)) +   # sum of p_solar
-            gp.quicksum(p_wind[b] for b in range(self.renewable.count)) +    # sum of p_wind
-            gp.quicksum(p_hydro[b] for b in range(self.renewable.count))     # sum of p_hydro
+            gp.quicksum(p_thermal[g] for g in range(self.thermal.count)) +          # sum of p_thermal
+            gp.quicksum(p_solar[b] for b in range(self.renewable.solar_count)) +    # sum of p_solar
+            gp.quicksum(p_wind[b] for b in range(self.renewable.wind_count)) +      # sum of p_wind
+            gp.quicksum(p_hydro[b] for b in range(self.renewable.hydro_count))      # sum of p_hydro
             == float(self.demand.total[idx_hour])
         )
 
