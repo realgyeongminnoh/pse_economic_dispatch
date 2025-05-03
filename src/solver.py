@@ -17,7 +17,22 @@ class Solver:
         self.results = results
 
 
-    def solve(self, idx_hour):
+    def solve(self, idx_hour, alpha:float = 0, model2: bool = False):
+        # the easiest change (code-wise) for model2 without changing/creating anything much # not algorithmically the best design # it's just data tuning (model 2)
+        thermal_c2 = self.thermal.c2.copy() # this is probably the least memory intensive design though just copying inside each process
+        thermal_c1 = self.thermal.c1.copy() # used in objective function later
+        thermal_c0 = self.thermal.c0.copy()
+
+        if model2:
+            thermal_c2[self.thermal.idx_lng] *= alpha
+            thermal_c1[self.thermal.idx_lng] *= alpha
+            thermal_c0[self.thermal.idx_lng] *= alpha
+            
+            thermal_c2[self.thermal.idx_coal] *= alpha
+            thermal_c1[self.thermal.idx_coal] *= alpha
+            thermal_c0[self.thermal.idx_coal] *= alpha
+            
+        
         hourly_decision = self.commitment.decision[idx_hour]
 
         # model declaration
@@ -42,13 +57,28 @@ class Solver:
         # objective function declaration (total cost to run thermal; excluding thermal units' no load cost term)
         model.setObjective(
             gp.quicksum(
-                self.thermal.c2.tolist()[g] * p_thermal[g] * p_thermal[g] + self.thermal.c1.tolist()[g] * p_thermal[g]
+                thermal_c2.tolist()[g] * p_thermal[g] * p_thermal[g] + thermal_c1.tolist()[g] * p_thermal[g]
                 for g in range(self.thermal.count)
-            ), gp.GRB.MINIMIZE
+            )
+            # curtailment penalty # 180 zero SMP going negative # meaningless # unrealistic
+            # either UC must be rerun / thermal pmin tuned for valid curtailment penalty inclusion # or may be reserve (real world vague) # BUT UC was solved this demand probably idk i have no idea
+            # + 2 * gp.quicksum(
+            #     self.renewable.solar_generation[idx_hour].tolist()[g] - p_solar[g]
+            #     for g in range(self.renewable.solar_count)
+            # )
+            # + 2 * gp.quicksum(
+            #     self.renewable.wind_generation[idx_hour].tolist()[g] - p_wind[g]
+            #     for g in range(self.renewable.wind_count)
+            # )
+            # + 4 * gp.quicksum(
+            #     self.renewable.hydro_generation[idx_hour].tolist()[g] - p_hydro[g]
+            #     for g in range(self.renewable.hydro_count)
+            # )
+            , gp.GRB.MINIMIZE
         )
 
         # solve
-        model.optimize()
+        model.optimize() # print(model.Status, end="")
 
         # result collection
         if model.Status == gp.GRB.OPTIMAL:
