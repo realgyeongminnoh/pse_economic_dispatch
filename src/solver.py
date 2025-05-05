@@ -48,8 +48,7 @@ class Solver:
             for g in range(self.con.lng.count)
         )
         # total reserve capacity at optimum must be greater than the designated reserve capacity
-        reserve_total_des = gamma * self.demand.total[idx_hour]
-        model.addConstr(gp.quicksum(r_lng[g] for g in range(self.con.lng.count)) >= reserve_total_des)
+        model.addConstr(gp.quicksum(r_lng[g] for g in range(self.con.lng.count)) >= gamma * self.demand.total[idx_hour])
 
         # objective function declaration
         # energy cost
@@ -82,21 +81,18 @@ class Solver:
 
         # result collection
         if model.Status == gp.GRB.OPTIMAL:
-            if reserve_total_des == 0:
-                reserve_total_des = 1
-
             reserve_total_opt = sum(r_lng[g].X for g in range(self.con.lng.count))
-            self.result.smp[idx_hour] = model.getAttr("Pi")[0]                      # SMP
-            self.result.cost_energy[idx_hour] = cost_energy.getValue()              # total system cost
-            self.result.cost_reserve[idx_hour] = cost_reserve.getValue()            # total system cost
-            self.result.gamma_eff[idx_hour] = reserve_total_opt / reserve_total_des # effective gamma
-            self.result.pr[idx_hour] = np.array(model.getAttr("X"))                 # varaible values at optimum
+            self.result.smp[idx_hour] = model.getAttr("Pi")[0]                                  # SMP
+            self.result.cost_energy[idx_hour] = cost_energy.getValue()                          # total system cost
+            self.result.cost_reserve[idx_hour] = cost_reserve.getValue()                        # total system cost
+            self.result.gammas_eff[idx_hour] = reserve_total_opt / self.demand.total[idx_hour]  # effective gamma
+            self.result.pr[idx_hour] = np.array(model.getAttr("X"))                             # varaible values at optimum
 
         else:
             self.result.smp[idx_hour] = np.nan
             self.result.cost_energy[idx_hour] = np.nan
             self.result.cost_reserve[idx_hour] = np.nan
-            self.result.gamma_eff[idx_hour] = np.nan
+            self.result.gammas_eff[idx_hour] = np.nan
             self.result.pr[idx_hour] = np.empty((self.result.tc)) * np.nan
 
             if model.Status == gp.GRB.INFEASIBLE:
@@ -154,8 +150,7 @@ class Solver:
             for g in range(self.con.lng.count)
         )
         # total reserve capacity at optimum must be greater than the designated reserve capacity
-        reserve_total_des = gamma * self.demand.total[idx_hour]
-        model.addConstr(gp.quicksum(r_lng[g] for g in range(self.con.lng.count)) >= reserve_total_des)
+        model.addConstr(gp.quicksum(r_lng[g] for g in range(self.con.lng.count)) >= gamma * self.demand.total[idx_hour])
 
         # objective function declaration
         # energy cost
@@ -187,21 +182,18 @@ class Solver:
         model.optimize()
 
         if model.Status == gp.GRB.OPTIMAL:
-            if reserve_total_des == 0:
-                reserve_total_des = 1
-
             reserve_total_opt = sum(r_lng[g].X for g in range(self.con.lng.count))
-            self.result.smp[idx_hour] = model.getAttr("Pi")[0]                      # SMP
-            self.result.cost_energy[idx_hour] = cost_energy.getValue()              # total system cost
-            self.result.cost_reserve[idx_hour] = cost_reserve.getValue()            # total system cost
-            self.result.gamma_eff[idx_hour] = reserve_total_opt / reserve_total_des # effective gamma
-            self.result.pr[idx_hour] = np.array(model.getAttr("X"))                 # varaible values at optimum
+            self.result.smp[idx_hour] = model.getAttr("Pi")[0]                                  # SMP
+            self.result.cost_energy[idx_hour] = cost_energy.getValue()                          # total system cost
+            self.result.cost_reserve[idx_hour] = cost_reserve.getValue()                        # total system cost
+            self.result.gammas_eff[idx_hour] = reserve_total_opt / self.demand.total[idx_hour]  # effective gamma
+            self.result.pr[idx_hour] = np.array(model.getAttr("X"))                             # varaible values at optimum
 
         else:
             self.result.smp[idx_hour] = np.nan
             self.result.cost_energy[idx_hour] = np.nan
             self.result.cost_reserve[idx_hour] = np.nan
-            self.result.gamma_eff[idx_hour] = np.nan
+            self.result.gammas_eff[idx_hour] = np.nan
             self.result.pr[idx_hour] = np.empty((self.result.tc)) * np.nan
 
             if model.Status == gp.GRB.INFEASIBLE:
@@ -259,8 +251,7 @@ class Solver:
             for g in range(self.con.lng.count)
         )
         # total reserve capacity at optimum must be greater than the designated reserve capacity
-        reserve_total_des = gamma * self.demand.total[idx_hour]
-        model.addConstr(gp.quicksum(r_lng[g] for g in range(self.con.lng.count)) >= reserve_total_des)
+        model.addConstr(gp.quicksum(r_lng[g] for g in range(self.con.lng.count)) >= gamma * self.demand.total[idx_hour])
 
         # objective function declaration
         # energy cost
@@ -293,21 +284,18 @@ class Solver:
 
         # result collection
         if model.Status == gp.GRB.OPTIMAL:
-            if reserve_total_des == 0:
-                reserve_total_des = 1
-
             reserve_total_opt = sum(r_lng[g].X for g in range(self.con.lng.count))
-            self.result.smp[idx_hour] = model.getAttr("Pi")[0]                      # SMP
-            self.result.cost_energy[idx_hour] = cost_energy.getValue()              # total system cost
-            self.result.cost_reserve[idx_hour] = cost_reserve.getValue()            # total system cost
-            self.result.gamma_eff[idx_hour] = reserve_total_opt / reserve_total_des # effective gamma
-            self.result.pr[idx_hour] = np.array(model.getAttr("X"))                 # varaible values at optimum
+            self.result.smp[idx_hour] = model.getAttr("Pi")[0]                                  # SMP
+            self.result.cost_energy[idx_hour] = cost_energy.getValue()                          # total system cost
+            self.result.cost_reserve[idx_hour] = cost_reserve.getValue()                        # total system cost
+            self.result.gammas_eff[idx_hour] = reserve_total_opt / self.demand.total[idx_hour]  # effective gamma
+            self.result.pr[idx_hour] = np.array(model.getAttr("X"))                             # varaible values at optimum
 
         else:
             self.result.smp[idx_hour] = np.nan
             self.result.cost_energy[idx_hour] = np.nan
             self.result.cost_reserve[idx_hour] = np.nan
-            self.result.gamma_eff[idx_hour] = np.nan
+            self.result.gammas_eff[idx_hour] = np.nan
             self.result.pr[idx_hour] = np.empty((self.result.tc)) * np.nan
 
             if model.Status == gp.GRB.INFEASIBLE:

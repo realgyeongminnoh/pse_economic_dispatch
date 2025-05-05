@@ -27,7 +27,7 @@ def process_save_result(result: Result, path_outputs):
     np.save(path_outputs / "cost_energy.npy", np.array(result.cost_energy))
     np.save(path_outputs / "cost_reserve.npy", np.array(result.cost_reserve))
     # effective gama save
-    np.save(path_outputs / "gamma_eff.npy", np.array(result.gamma_eff))
+    np.save(path_outputs / "gammas_eff.npy", np.array(result.gammas_eff))
     # p save for each source
     np.save(path_outputs / "p_coal.npy", np.array(result.p_coal))
     np.save(path_outputs / "p_lng.npy", np.array(result.p_lng))
