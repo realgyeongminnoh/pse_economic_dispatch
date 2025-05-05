@@ -13,8 +13,8 @@ class Solver:
         self.ren = ren
         self.demand = demand
         self.result = result
-    
-    
+
+
     def solve(self, idx_hour, gamma):
         # model declaration
         model = gp.Model()
@@ -28,7 +28,7 @@ class Solver:
         p_wind = model.addVars(self.ren.wind.count, lb=0, ub=self.ren.wind.pmax[idx_hour].tolist())
         p_hydro = model.addVars(self.ren.hydro.count, lb=0, ub=self.ren.hydro.pmax[idx_hour].tolist())
 
-        # equality constraint declaration
+        # demand equality constraint declaration
         model.addConstr(
             gp.quicksum(p_coal[g] for g in range(self.con.coal.count)) +
             gp.quicksum(p_lng[g] for g in range(self.con.lng.count)) +
@@ -39,14 +39,17 @@ class Solver:
             == float(self.demand.total[idx_hour])
         )
 
-        # reserve capacity (parameter)
-        R_lng = gamma * self.con.lng.capmax
-
-        # reserve capacity inequality constraint declaration
+        # RESERVE CAPCITY
+        # variable declaration
+        r_lng = model.addVars(self.con.lng.count, lb=0, ub=(self.con.lng.pmax[idx_hour] - self.con.lng.pmin[idx_hour]).tolist())
+        # for each lng unit, the sum of power output and reserve capacity must be less than the pmax (which respects the commitmnet decision)
         model.addConstrs(
-            p_lng[g] + R_lng.tolist()[g] <= self.con.lng.capmax.tolist()[g]
+            p_lng[g] + r_lng[g] <= self.con.lng.pmax[idx_hour].tolist()[g]
             for g in range(self.con.lng.count)
         )
+        # total reserve capacity at optimum must be greater than the designated reserve capacity
+        reserve_total_des = gamma * self.demand.total[idx_hour]
+        model.addConstr(gp.quicksum(r_lng[g] for g in range(self.con.lng.count)) >= reserve_total_des)
 
         # objective function declaration
         # energy cost
@@ -67,7 +70,7 @@ class Solver:
         # reserve cost
         cost_reserve = (
             gp.quicksum(
-                self.con.lng.c1.tolist()[g] * R_lng[g]
+                self.con.lng.c1.tolist()[g] * r_lng[g]
                 for g in range(self.con.lng.count)
             )
         )
@@ -79,15 +82,22 @@ class Solver:
 
         # result collection
         if model.Status == gp.GRB.OPTIMAL:
-            self.result.smp[idx_hour] = model.getAttr("Pi")[0]              # SMP
-            self.result.cost_energy[idx_hour] = cost_energy.getValue()      # total system cost
-            self.result.cost_reserve[idx_hour] = cost_reserve.getValue()    # total system cost
-            self.result.p[idx_hour] = np.array(model.getAttr("X"))          # power generation for 713 generators and buses
+            if reserve_total_des == 0:
+                reserve_total_des = 1
+
+            reserve_total_opt = sum(r_lng[g].X for g in range(self.con.lng.count))
+            self.result.smp[idx_hour] = model.getAttr("Pi")[0]                      # SMP
+            self.result.cost_energy[idx_hour] = cost_energy.getValue()              # total system cost
+            self.result.cost_reserve[idx_hour] = cost_reserve.getValue()            # total system cost
+            self.result.gamma_eff[idx_hour] = reserve_total_opt / reserve_total_des # effective gamma
+            self.result.pr[idx_hour] = np.array(model.getAttr("X"))                 # varaible values at optimum
+
         else:
             self.result.smp[idx_hour] = np.nan
             self.result.cost_energy[idx_hour] = np.nan
             self.result.cost_reserve[idx_hour] = np.nan
-            self.result.p[idx_hour] = np.empty(8760) * np.nan
+            self.result.gamma_eff[idx_hour] = np.nan
+            self.result.pr[idx_hour] = np.empty((self.result.tc)) * np.nan
 
             if model.Status == gp.GRB.INFEASIBLE:
                 model.computeIIS()
@@ -135,14 +145,17 @@ class Solver:
             == float(self.demand.total[idx_hour])
         )
 
-        # reserve capacity (parameter)
-        R_lng = gamma * self.con.lng.capmax
-
-        # reserve capacity inequality constraint declaration
+        # RESERVE CAPCITY
+        # variable declaration
+        r_lng = model.addVars(self.con.lng.count, lb=0, ub=(self.con.lng.pmax[idx_hour] - self.con.lng.pmin[idx_hour]).tolist())
+        # for each lng unit, the sum of power output and reserve capacity must be less than the pmax (which respects the commitmnet decision)
         model.addConstrs(
-            p_lng[g] + R_lng.tolist()[g] <= self.con.lng.capmax.tolist()[g]
+            p_lng[g] + r_lng[g] <= self.con.lng.pmax[idx_hour].tolist()[g]
             for g in range(self.con.lng.count)
         )
+        # total reserve capacity at optimum must be greater than the designated reserve capacity
+        reserve_total_des = gamma * self.demand.total[idx_hour]
+        model.addConstr(gp.quicksum(r_lng[g] for g in range(self.con.lng.count)) >= reserve_total_des)
 
         # objective function declaration
         # energy cost
@@ -163,7 +176,7 @@ class Solver:
         # reserve cost
         cost_reserve = (
             gp.quicksum(
-                self.con.lng.c1.tolist()[g] * R_lng[g]
+                lng_c1.tolist()[g] * r_lng[g]
                 for g in range(self.con.lng.count)
             )
         )
@@ -173,27 +186,33 @@ class Solver:
         # solve
         model.optimize()
 
-        # result collection
         if model.Status == gp.GRB.OPTIMAL:
-            self.result.smp[idx_hour] = model.getAttr("Pi")[0]              # SMP
-            self.result.cost_energy[idx_hour] = cost_energy.getValue()      # total system cost
-            self.result.cost_reserve[idx_hour] = cost_reserve.getValue()    # total system cost
-            self.result.p[idx_hour] = np.array(model.getAttr("X"))          # power generation for 713 generators and buses
+            if reserve_total_des == 0:
+                reserve_total_des = 1
+
+            reserve_total_opt = sum(r_lng[g].X for g in range(self.con.lng.count))
+            self.result.smp[idx_hour] = model.getAttr("Pi")[0]                      # SMP
+            self.result.cost_energy[idx_hour] = cost_energy.getValue()              # total system cost
+            self.result.cost_reserve[idx_hour] = cost_reserve.getValue()            # total system cost
+            self.result.gamma_eff[idx_hour] = reserve_total_opt / reserve_total_des # effective gamma
+            self.result.pr[idx_hour] = np.array(model.getAttr("X"))                 # varaible values at optimum
+
         else:
             self.result.smp[idx_hour] = np.nan
             self.result.cost_energy[idx_hour] = np.nan
             self.result.cost_reserve[idx_hour] = np.nan
-            self.result.p[idx_hour] = np.empty(8760) * np.nan
+            self.result.gamma_eff[idx_hour] = np.nan
+            self.result.pr[idx_hour] = np.empty((self.result.tc)) * np.nan
 
             if model.Status == gp.GRB.INFEASIBLE:
                 model.computeIIS()
                 if model.getVars()[0].IISUB:
-                    print(f"Model 2 | Problem for {idx_hour} is infeasible: upper bound in variables")
+                    print(f"Model 1 | Problem for {idx_hour} is infeasible: upper bound in variables")
                 else:
-                    print(f"Model 2 | Problem for {idx_hour} is infeasible: lower bound in variables")
+                    print(f"Model 1 | Problem for {idx_hour} is infeasible: lower bound in variables")
             else:
                 print("https://docs.gurobi.com/projects/optimizer/en/current/reference/numericcodes/statuscodes.html")
-                print(f"Model 2 | Problem for {idx_hour} is neither optimal nor infeasible: {model.Status} status code")
+                print(f"Model 1 | Problem for {idx_hour} is neither optimal nor infeasible: {model.Status} status code")
 
 
     def solve_post(self, idx_hour, alpha_coal, alpha_lng, alpha_nuclear, gamma):
@@ -231,14 +250,17 @@ class Solver:
             == float(self.demand.total[idx_hour])
         )
         
-        # reserve capacity (parameter)
-        R_lng = gamma * self.con.lng.capmax
-
-        # reserve capacity inequality constraint declaration
+        # RESERVE CAPCITY
+        # variable declaration
+        r_lng = model.addVars(self.con.lng.count, lb=0, ub=(self.con.lng.pmax[idx_hour] - self.con.lng.pmin[idx_hour]).tolist())
+        # for each lng unit, the sum of power output and reserve capacity must be less than the pmax (which respects the commitmnet decision)
         model.addConstrs(
-            p_lng[g] + R_lng.tolist()[g] <= self.con.lng.capmax.tolist()[g]
+            p_lng[g] + r_lng[g] <= self.con.lng.pmax[idx_hour].tolist()[g]
             for g in range(self.con.lng.count)
         )
+        # total reserve capacity at optimum must be greater than the designated reserve capacity
+        reserve_total_des = gamma * self.demand.total[idx_hour]
+        model.addConstr(gp.quicksum(r_lng[g] for g in range(self.con.lng.count)) >= reserve_total_des)
 
         # objective function declaration
         # energy cost
@@ -259,7 +281,7 @@ class Solver:
         # reserve cost
         cost_reserve = (
             gp.quicksum(
-                lng_c1.tolist()[g] * R_lng[g]
+                lng_c1.tolist()[g] * r_lng[g]
                 for g in range(self.con.lng.count)
             )
         )
@@ -271,22 +293,29 @@ class Solver:
 
         # result collection
         if model.Status == gp.GRB.OPTIMAL:
-            self.result.smp[idx_hour] = model.getAttr("Pi")[0]              # SMP
-            self.result.cost_energy[idx_hour] = cost_energy.getValue()      # total system cost
-            self.result.cost_reserve[idx_hour] = cost_reserve.getValue()    # total system cost
-            self.result.p[idx_hour] = np.array(model.getAttr("X"))          # power generation for 713 generators and buses
+            if reserve_total_des == 0:
+                reserve_total_des = 1
+
+            reserve_total_opt = sum(r_lng[g].X for g in range(self.con.lng.count))
+            self.result.smp[idx_hour] = model.getAttr("Pi")[0]                      # SMP
+            self.result.cost_energy[idx_hour] = cost_energy.getValue()              # total system cost
+            self.result.cost_reserve[idx_hour] = cost_reserve.getValue()            # total system cost
+            self.result.gamma_eff[idx_hour] = reserve_total_opt / reserve_total_des # effective gamma
+            self.result.pr[idx_hour] = np.array(model.getAttr("X"))                 # varaible values at optimum
+
         else:
             self.result.smp[idx_hour] = np.nan
             self.result.cost_energy[idx_hour] = np.nan
             self.result.cost_reserve[idx_hour] = np.nan
-            self.result.p[idx_hour] = np.empty(8760) * np.nan
+            self.result.gamma_eff[idx_hour] = np.nan
+            self.result.pr[idx_hour] = np.empty((self.result.tc)) * np.nan
 
             if model.Status == gp.GRB.INFEASIBLE:
                 model.computeIIS()
                 if model.getVars()[0].IISUB:
-                    print(f"Model 3 | Problem for {idx_hour} is infeasible: upper bound in variables")
+                    print(f"Model 1 | Problem for {idx_hour} is infeasible: upper bound in variables")
                 else:
-                    print(f"Model 3 | Problem for {idx_hour} is infeasible: lower bound in variables")
+                    print(f"Model 1 | Problem for {idx_hour} is infeasible: lower bound in variables")
             else:
                 print("https://docs.gurobi.com/projects/optimizer/en/current/reference/numericcodes/statuscodes.html")
-                print(f"Model 3 | Problem for {idx_hour} is neither optimal nor infeasible: {model.Status} status code")
+                print(f"Model 1 | Problem for {idx_hour} is neither optimal nor infeasible: {model.Status} status code")

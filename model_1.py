@@ -26,6 +26,8 @@ def process_save_result(result: Result, path_outputs):
     # total energy and reserve cost save
     np.save(path_outputs / "cost_energy.npy", np.array(result.cost_energy))
     np.save(path_outputs / "cost_reserve.npy", np.array(result.cost_reserve))
+    # effective gama save
+    np.save(path_outputs / "gamma_eff.npy", np.array(result.gamma_eff))
     # p save for each source
     np.save(path_outputs / "p_coal.npy", np.array(result.p_coal))
     np.save(path_outputs / "p_lng.npy", np.array(result.p_lng))
@@ -33,7 +35,7 @@ def process_save_result(result: Result, path_outputs):
     np.save(path_outputs / "p_solar.npy", np.array(result.p_solar))
     np.save(path_outputs / "p_wind.npy", np.array(result.p_wind))
     np.save(path_outputs / "p_hydro.npy", np.array(result.p_hydro))
-
+    np.save(path_outputs / "r_lng.npy", np.array(result.r_lng))
 
 def suppress_gurobi_parallel_spam():
     print(); (_ := gp.Model()).setParam("OutputFlag", 0)
