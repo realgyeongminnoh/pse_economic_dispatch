@@ -1,102 +1,292 @@
 import numpy as np
 import gurobipy as gp
 
-from src.thermal import Thermal
+from src.conventional import Conventional
 from src.renewable import Renewable
 from src.demand import Demand
-from src.commitment import Commitment
-from src.results import Results
+from src.result import Result
 
 
 class Solver:
-    def __init__(self, thermal: Thermal, renewable: Renewable, demand: Demand, commitment: Commitment, results: Results):
-        self.thermal = thermal
-        self.renewable = renewable
+    def __init__(self, con: Conventional, ren: Renewable, demand: Demand, result: Result):
+        self.con = con
+        self.ren = ren
         self.demand = demand
-        self.commitment = commitment
-        self.results = results
+        self.result = result
+    
+    
+    def solve(self, idx_hour, gamma):
+        # model declaration
+        model = gp.Model()
+        model.setParam("OutputFlag", 0)
+
+        # varaible declaration with min max bounds (inequality constraints applied implicitly)
+        p_coal = model.addVars(self.con.coal.count, lb=self.con.coal.pmin[idx_hour].tolist(), ub=self.con.coal.pmax[idx_hour].tolist())
+        p_lng = model.addVars(self.con.lng.count, lb=self.con.lng.pmin[idx_hour].tolist(), ub=self.con.lng.pmax[idx_hour].tolist())
+        p_nuclear = model.addVars(self.con.nuclear.count, lb=self.con.nuclear.pmin[idx_hour].tolist(), ub=self.con.nuclear.pmax[idx_hour].tolist())
+        p_solar = model.addVars(self.ren.solar.count, lb=0, ub=self.ren.solar.pmax[idx_hour].tolist())
+        p_wind = model.addVars(self.ren.wind.count, lb=0, ub=self.ren.wind.pmax[idx_hour].tolist())
+        p_hydro = model.addVars(self.ren.hydro.count, lb=0, ub=self.ren.hydro.pmax[idx_hour].tolist())
+
+        # equality constraint declaration
+        model.addConstr(
+            gp.quicksum(p_coal[g] for g in range(self.con.coal.count)) +
+            gp.quicksum(p_lng[g] for g in range(self.con.lng.count)) +
+            gp.quicksum(p_nuclear[g] for g in range(self.con.nuclear.count)) +
+            gp.quicksum(p_solar[b] for b in range(self.ren.solar.count)) +
+            gp.quicksum(p_wind[b] for b in range(self.ren.wind.count)) +
+            gp.quicksum(p_hydro[b] for b in range(self.ren.hydro.count))
+            == float(self.demand.total[idx_hour])
+        )
+
+        # reserve capacity (parameter)
+        R_lng = gamma * self.con.lng.capmax
+
+        # reserve capacity inequality constraint declaration
+        model.addConstrs(
+            p_lng[g] + R_lng.tolist()[g] <= self.con.lng.capmax.tolist()[g]
+            for g in range(self.con.lng.count)
+        )
+
+        # objective function declaration
+        # energy cost
+        cost_energy = (
+            gp.quicksum(
+                self.con.coal.c2.tolist()[g] * p_coal[g] * p_coal[g] + self.con.coal.c1.tolist()[g] * p_coal[g] + self.con.coal.c0.tolist()[g]
+                for g in range(self.con.coal.count)
+            ) + 
+            gp.quicksum(
+                self.con.lng.c2.tolist()[g] * p_lng[g] * p_lng[g] + self.con.lng.c1.tolist()[g] * p_lng[g] + self.con.lng.c0.tolist()[g]
+                for g in range(self.con.lng.count)
+            ) + 
+            gp.quicksum(
+                self.con.nuclear.c2.tolist()[g] * p_nuclear[g] * p_nuclear[g] + self.con.nuclear.c1.tolist()[g] * p_nuclear[g] + self.con.nuclear.c0.tolist()[g]
+                for g in range(self.con.nuclear.count)
+            )
+        )
+        # reserve cost
+        cost_reserve = (
+            gp.quicksum(
+                self.con.lng.c1.tolist()[g] * R_lng[g]
+                for g in range(self.con.lng.count)
+            )
+        )
+        # objective # only minimize energy cost
+        model.setObjective(cost_energy, gp.GRB.MINIMIZE)
+
+        # solve
+        model.optimize()
+
+        # result collection
+        if model.Status == gp.GRB.OPTIMAL:
+            self.result.smp[idx_hour] = model.getAttr("Pi")[0]              # SMP
+            self.result.cost_energy[idx_hour] = cost_energy.getValue()      # total system cost
+            self.result.cost_reserve[idx_hour] = cost_reserve.getValue()    # total system cost
+            self.result.p[idx_hour] = np.array(model.getAttr("X"))          # power generation for 713 generators and buses
+        else:
+            self.result.smp[idx_hour] = np.nan
+            self.result.cost_energy[idx_hour] = np.nan
+            self.result.cost_reserve[idx_hour] = np.nan
+            self.result.p[idx_hour] = np.empty(8760) * np.nan
+
+            if model.Status == gp.GRB.INFEASIBLE:
+                model.computeIIS()
+                if model.getVars()[0].IISUB:
+                    print(f"Model 1 | Problem for {idx_hour} is infeasible: upper bound in variables")
+                else:
+                    print(f"Model 1 | Problem for {idx_hour} is infeasible: lower bound in variables")
+            else:
+                print("https://docs.gurobi.com/projects/optimizer/en/current/reference/numericcodes/statuscodes.html")
+                print(f"Model 1 | Problem for {idx_hour} is neither optimal nor infeasible: {model.Status} status code")
 
 
-    def solve(self, idx_hour, alpha:float = 0, model2: bool = False):
-        # the easiest change (code-wise) for model2 without changing/creating anything much # not algorithmically the best design # it's just data tuning (model 2)
-        thermal_c2 = self.thermal.c2.copy() # this is probably the least memory intensive design though just copying inside each process
-        thermal_c1 = self.thermal.c1.copy() # used in objective function later
-        thermal_c0 = self.thermal.c0.copy()
-
-        if model2:
-            thermal_c2[self.thermal.idx_lng] *= alpha
-            thermal_c1[self.thermal.idx_lng] *= alpha
-            thermal_c0[self.thermal.idx_lng] *= alpha
-            
-            thermal_c2[self.thermal.idx_coal] *= alpha
-            thermal_c1[self.thermal.idx_coal] *= alpha
-            thermal_c0[self.thermal.idx_coal] *= alpha
-            
-        
-        hourly_decision = self.commitment.decision[idx_hour]
+    def solve_pre(self, idx_hour, alpha_coal, alpha_lng, alpha_nuclear, gamma):
+        # cost curve tuning
+        coal_c2 = self.con.coal.c2.copy() * alpha_lng # alpha_coal is substituted by alpha_lng
+        coal_c1 = self.con.coal.c1.copy() * alpha_lng # alpha_coal is substituted by alpha_lng
+        coal_c0 = self.con.coal.c0.copy() * alpha_lng # alpha_coal is substituted by alpha_lng
+        lng_c2 = self.con.lng.c2.copy() * alpha_lng
+        lng_c1 = self.con.lng.c1.copy() * alpha_lng
+        lng_c0 = self.con.lng.c0.copy() * alpha_lng
+        nuclear_c2 = self.con.nuclear.c2.copy() * alpha_nuclear
+        nuclear_c1 = self.con.nuclear.c1.copy() * alpha_nuclear
+        nuclear_c0 = self.con.nuclear.c0.copy() * alpha_nuclear
 
         # model declaration
         model = gp.Model()
         model.setParam("OutputFlag", 0)
 
-        # varaible declaration with min max bounds (inequality constraints applied implicitly in Gurobi model)
-        p_thermal = model.addVars(self.thermal.count, lb=(self.thermal.pmin * hourly_decision).tolist(), ub=(self.thermal.pmax * hourly_decision).tolist())
-        p_solar = model.addVars(self.renewable.solar_count, lb=0, ub=self.renewable.solar_generation[idx_hour].tolist())
-        p_wind = model.addVars(self.renewable.wind_count, lb=0, ub=self.renewable.wind_generation[idx_hour].tolist())
-        p_hydro = model.addVars(self.renewable.hydro_count, lb=0, ub=self.renewable.hydro_generation[idx_hour].tolist())
-        
+        # varaible declaration with min max bounds (inequality constraints applied implicitly)
+        p_coal = model.addVars(self.con.coal.count, lb=self.con.coal.pmin[idx_hour].tolist(), ub=self.con.coal.pmax[idx_hour].tolist())
+        p_lng = model.addVars(self.con.lng.count, lb=self.con.lng.pmin[idx_hour].tolist(), ub=self.con.lng.pmax[idx_hour].tolist())
+        p_nuclear = model.addVars(self.con.nuclear.count, lb=self.con.nuclear.pmin[idx_hour].tolist(), ub=self.con.nuclear.pmax[idx_hour].tolist())
+        p_solar = model.addVars(self.ren.solar.count, lb=0, ub=self.ren.solar.pmax[idx_hour].tolist())
+        p_wind = model.addVars(self.ren.wind.count, lb=0, ub=self.ren.wind.pmax[idx_hour].tolist())
+        p_hydro = model.addVars(self.ren.hydro.count, lb=0, ub=self.ren.hydro.pmax[idx_hour].tolist())
+
         # equality constraint declaration
         model.addConstr(
-            gp.quicksum(p_thermal[g] for g in range(self.thermal.count)) +          # sum of p_thermal
-            gp.quicksum(p_solar[b] for b in range(self.renewable.solar_count)) +    # sum of p_solar
-            gp.quicksum(p_wind[b] for b in range(self.renewable.wind_count)) +      # sum of p_wind
-            gp.quicksum(p_hydro[b] for b in range(self.renewable.hydro_count))      # sum of p_hydro
+            gp.quicksum(p_coal[g] for g in range(self.con.coal.count)) +
+            gp.quicksum(p_lng[g] for g in range(self.con.lng.count)) +
+            gp.quicksum(p_nuclear[g] for g in range(self.con.nuclear.count)) +
+            gp.quicksum(p_solar[b] for b in range(self.ren.solar.count)) +
+            gp.quicksum(p_wind[b] for b in range(self.ren.wind.count)) +
+            gp.quicksum(p_hydro[b] for b in range(self.ren.hydro.count))
             == float(self.demand.total[idx_hour])
         )
 
-        # objective function declaration (total cost to run thermal; excluding thermal units' no load cost term)
-        model.setObjective(
-            gp.quicksum(
-                thermal_c2.tolist()[g] * p_thermal[g] * p_thermal[g] + thermal_c1.tolist()[g] * p_thermal[g]
-                for g in range(self.thermal.count)
-            )
-            # curtailment penalty # 180 zero SMP going negative # meaningless # unrealistic
-            # either UC must be rerun / thermal pmin tuned for valid curtailment penalty inclusion # or may be reserve (real world vague) # BUT UC was solved this demand probably idk i have no idea
-            # + 2 * gp.quicksum(
-            #     self.renewable.solar_generation[idx_hour].tolist()[g] - p_solar[g]
-            #     for g in range(self.renewable.solar_count)
-            # )
-            # + 2 * gp.quicksum(
-            #     self.renewable.wind_generation[idx_hour].tolist()[g] - p_wind[g]
-            #     for g in range(self.renewable.wind_count)
-            # )
-            # + 4 * gp.quicksum(
-            #     self.renewable.hydro_generation[idx_hour].tolist()[g] - p_hydro[g]
-            #     for g in range(self.renewable.hydro_count)
-            # )
-            , gp.GRB.MINIMIZE
+        # reserve capacity (parameter)
+        R_lng = gamma * self.con.lng.capmax
+
+        # reserve capacity inequality constraint declaration
+        model.addConstrs(
+            p_lng[g] + R_lng.tolist()[g] <= self.con.lng.capmax.tolist()[g]
+            for g in range(self.con.lng.count)
         )
 
+        # objective function declaration
+        # energy cost
+        cost_energy = (
+            gp.quicksum(
+                coal_c2.tolist()[g] * p_coal[g] * p_coal[g] + coal_c1.tolist()[g] * p_coal[g] + coal_c0.tolist()[g]
+                for g in range(self.con.coal.count)
+            ) + 
+            gp.quicksum(
+                lng_c2.tolist()[g] * p_lng[g] * p_lng[g] + lng_c1.tolist()[g] * p_lng[g] + lng_c0.tolist()[g]
+                for g in range(self.con.lng.count)
+            ) + 
+            gp.quicksum(
+                nuclear_c2.tolist()[g] * p_nuclear[g] * p_nuclear[g] + nuclear_c1.tolist()[g] * p_nuclear[g] + nuclear_c0.tolist()[g]
+                for g in range(self.con.nuclear.count)
+            )
+        )
+        # reserve cost
+        cost_reserve = (
+            gp.quicksum(
+                self.con.lng.c1.tolist()[g] * R_lng[g]
+                for g in range(self.con.lng.count)
+            )
+        )
+        # objective # only minimize energy cost
+        model.setObjective(cost_energy, gp.GRB.MINIMIZE)
+
         # solve
-        model.optimize() # print(model.Status, end="")
+        model.optimize()
 
         # result collection
         if model.Status == gp.GRB.OPTIMAL:
-            self.results.smp[idx_hour] = model.getAttr("Pi")[0]       # SMP
-            self.results.cost_system[idx_hour] = model.ObjVal         # total system cost
-            self.results.p[idx_hour] = np.array(model.getAttr("X"))   # power generation for 713 generators and buses
-
+            self.result.smp[idx_hour] = model.getAttr("Pi")[0]              # SMP
+            self.result.cost_energy[idx_hour] = cost_energy.getValue()      # total system cost
+            self.result.cost_reserve[idx_hour] = cost_reserve.getValue()    # total system cost
+            self.result.p[idx_hour] = np.array(model.getAttr("X"))          # power generation for 713 generators and buses
         else:
-            self.results.smp[idx_hour] = np.nan
-            self.results.cost_system[idx_hour] = np.nan
-            self.results.p[idx_hour] = np.empty(8760) * np.nan
+            self.result.smp[idx_hour] = np.nan
+            self.result.cost_energy[idx_hour] = np.nan
+            self.result.cost_reserve[idx_hour] = np.nan
+            self.result.p[idx_hour] = np.empty(8760) * np.nan
 
             if model.Status == gp.GRB.INFEASIBLE:
                 model.computeIIS()
                 if model.getVars()[0].IISUB:
-                    print(f"Problem for {idx_hour} is infeasible: upper bound in variables")
+                    print(f"Model 2 | Problem for {idx_hour} is infeasible: upper bound in variables")
                 else:
-                    print(f"Problem for {idx_hour} is infeasible: lower bound in variables")
+                    print(f"Model 2 | Problem for {idx_hour} is infeasible: lower bound in variables")
             else:
                 print("https://docs.gurobi.com/projects/optimizer/en/current/reference/numericcodes/statuscodes.html")
-                print(f"Problem for {idx_hour} is neither optimal nor infeasible: {model.Status} status code")
+                print(f"Model 2 | Problem for {idx_hour} is neither optimal nor infeasible: {model.Status} status code")
+
+
+    def solve_post(self, idx_hour, alpha_coal, alpha_lng, alpha_nuclear, gamma):
+        # cost curve tuning
+        coal_c2 = self.con.coal.c2.copy() * alpha_lng # alpha_coal is substituted by alpha_lng
+        coal_c1 = self.con.coal.c1.copy() * alpha_lng # alpha_coal is substituted by alpha_lng
+        coal_c0 = self.con.coal.c0.copy() * alpha_lng # alpha_coal is substituted by alpha_lng
+        lng_c2 = self.con.lng.c2.copy() * alpha_lng
+        lng_c1 = self.con.lng.c1.copy() * alpha_lng
+        lng_c0 = self.con.lng.c0.copy() * alpha_lng
+        nuclear_c2 = self.con.nuclear.c2.copy() * alpha_nuclear
+        nuclear_c1 = self.con.nuclear.c1.copy() * alpha_nuclear
+        nuclear_c0 = self.con.nuclear.c0.copy() * alpha_nuclear
+
+        # model declaration
+        model = gp.Model()
+        model.setParam("OutputFlag", 0)
+
+        # varaible declaration with min max bounds (inequality constraints applied implicitly)
+        p_coal = model.addVars(self.con.coal.count, lb=self.con.coal.pmin[idx_hour].tolist(), ub=self.con.coal.pmax[idx_hour].tolist())
+        p_lng = model.addVars(self.con.lng.count, lb=self.con.lng.pmin[idx_hour].tolist(), ub=self.con.lng.pmax[idx_hour].tolist())
+        p_nuclear = model.addVars(self.con.nuclear.count, lb=self.con.nuclear.pmin[idx_hour].tolist(), ub=self.con.nuclear.pmax[idx_hour].tolist())
+        p_solar = model.addVars(self.ren.solar.count, lb=0, ub=self.ren.solar.pmax[idx_hour].tolist())
+        p_wind = model.addVars(self.ren.wind.count, lb=0, ub=self.ren.wind.pmax[idx_hour].tolist())
+        p_hydro = model.addVars(self.ren.hydro.count, lb=0, ub=self.ren.hydro.pmax[idx_hour].tolist())
+
+        # equality constraint declaration
+        model.addConstr(
+            gp.quicksum(p_coal[g] for g in range(self.con.coal.count)) +
+            gp.quicksum(p_lng[g] for g in range(self.con.lng.count)) +
+            gp.quicksum(p_nuclear[g] for g in range(self.con.nuclear.count)) +
+            gp.quicksum(p_solar[b] for b in range(self.ren.solar.count)) +
+            gp.quicksum(p_wind[b] for b in range(self.ren.wind.count)) +
+            gp.quicksum(p_hydro[b] for b in range(self.ren.hydro.count))
+            == float(self.demand.total[idx_hour])
+        )
+        
+        # reserve capacity (parameter)
+        R_lng = gamma * self.con.lng.capmax
+
+        # reserve capacity inequality constraint declaration
+        model.addConstrs(
+            p_lng[g] + R_lng.tolist()[g] <= self.con.lng.capmax.tolist()[g]
+            for g in range(self.con.lng.count)
+        )
+
+        # objective function declaration
+        # energy cost
+        cost_energy = (
+            gp.quicksum(
+                coal_c2.tolist()[g] * p_coal[g] * p_coal[g] + coal_c1.tolist()[g] * p_coal[g] + coal_c0.tolist()[g]
+                for g in range(self.con.coal.count)
+            ) + 
+            gp.quicksum(
+                lng_c2.tolist()[g] * p_lng[g] * p_lng[g] + lng_c1.tolist()[g] * p_lng[g] + lng_c0.tolist()[g]
+                for g in range(self.con.lng.count)
+            ) + 
+            gp.quicksum(
+                nuclear_c2.tolist()[g] * p_nuclear[g] * p_nuclear[g] + nuclear_c1.tolist()[g] * p_nuclear[g] + nuclear_c0.tolist()[g]
+                for g in range(self.con.nuclear.count)
+            )
+        )
+        # reserve cost
+        cost_reserve = (
+            gp.quicksum(
+                lng_c1.tolist()[g] * R_lng[g]
+                for g in range(self.con.lng.count)
+            )
+        )
+        # objective # minimize both energy and reserve cost
+        model.setObjective(cost_energy + cost_reserve, gp.GRB.MINIMIZE)
+
+        # solve
+        model.optimize()
+
+        # result collection
+        if model.Status == gp.GRB.OPTIMAL:
+            self.result.smp[idx_hour] = model.getAttr("Pi")[0]              # SMP
+            self.result.cost_energy[idx_hour] = cost_energy.getValue()      # total system cost
+            self.result.cost_reserve[idx_hour] = cost_reserve.getValue()    # total system cost
+            self.result.p[idx_hour] = np.array(model.getAttr("X"))          # power generation for 713 generators and buses
+        else:
+            self.result.smp[idx_hour] = np.nan
+            self.result.cost_energy[idx_hour] = np.nan
+            self.result.cost_reserve[idx_hour] = np.nan
+            self.result.p[idx_hour] = np.empty(8760) * np.nan
+
+            if model.Status == gp.GRB.INFEASIBLE:
+                model.computeIIS()
+                if model.getVars()[0].IISUB:
+                    print(f"Model 3 | Problem for {idx_hour} is infeasible: upper bound in variables")
+                else:
+                    print(f"Model 3 | Problem for {idx_hour} is infeasible: lower bound in variables")
+            else:
+                print("https://docs.gurobi.com/projects/optimizer/en/current/reference/numericcodes/statuscodes.html")
+                print(f"Model 3 | Problem for {idx_hour} is neither optimal nor infeasible: {model.Status} status code")
