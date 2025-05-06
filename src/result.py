@@ -15,12 +15,12 @@ class Result:
 
         # parallel
         manager = Manager()
-        self.smp = manager.list(np.empty((8760)))
-        self.cost_energy = manager.list(np.empty((8760)))
-        self.cost_reserve = manager.list(np.empty((8760)))
-        self.gammas_eff = manager.list(np.empty((8760)))
-        self.pr = manager.list(np.empty((8760)))
-
+        self.smp = manager.list([np.nan]*8760)
+        self.cost_energy = manager.list([np.nan]*8760)
+        self.cost_reserve = manager.list([np.nan]*8760)
+        self.gammas_eff = manager.list([np.nan]*8760)
+        self.pr = manager.list([np.full(self.tc, np.nan) for _ in range(8760)])        
+        
         # # sequential
         # self.smp = np.empty((8760))
         # self.cost_energy = np.empty((8760))
@@ -30,6 +30,15 @@ class Result:
 
 
     def process_outputs(self):
+        def _has_nan(seq):
+            return any(np.isnan(x).any() for x in seq)
+
+        if (_has_nan(self.smp) or _has_nan(self.cost_energy) or
+            _has_nan(self.cost_reserve) or _has_nan(self.gammas_eff) or
+            _has_nan(self.pr)):
+            print("[Result] WARNING: NaNs detected in solver outputs")
+
+
         # parallel
         self.smp = np.array(self.smp)
         self.cost_energy = np.array(self.cost_energy)

@@ -89,12 +89,6 @@ class Solver:
             self.result.pr[idx_hour] = np.array(model.getAttr("X"))                             # varaible values at optimum
 
         else:
-            self.result.smp[idx_hour] = np.nan
-            self.result.cost_energy[idx_hour] = np.nan
-            self.result.cost_reserve[idx_hour] = np.nan
-            self.result.gammas_eff[idx_hour] = np.nan
-            self.result.pr[idx_hour] = np.empty((self.result.tc)) * np.nan
-
             if model.Status == gp.GRB.INFEASIBLE:
                 model.computeIIS()
                 if model.getVars()[0].IISUB:
@@ -190,12 +184,6 @@ class Solver:
             self.result.pr[idx_hour] = np.array(model.getAttr("X"))                             # varaible values at optimum
 
         else:
-            self.result.smp[idx_hour] = np.nan
-            self.result.cost_energy[idx_hour] = np.nan
-            self.result.cost_reserve[idx_hour] = np.nan
-            self.result.gammas_eff[idx_hour] = np.nan
-            self.result.pr[idx_hour] = np.empty((self.result.tc)) * np.nan
-
             if model.Status == gp.GRB.INFEASIBLE:
                 model.computeIIS()
                 if model.getVars()[0].IISUB:
@@ -292,12 +280,6 @@ class Solver:
             self.result.pr[idx_hour] = np.array(model.getAttr("X"))                             # varaible values at optimum
 
         else:
-            self.result.smp[idx_hour] = np.nan
-            self.result.cost_energy[idx_hour] = np.nan
-            self.result.cost_reserve[idx_hour] = np.nan
-            self.result.gammas_eff[idx_hour] = np.nan
-            self.result.pr[idx_hour] = np.empty((self.result.tc)) * np.nan
-
             if model.Status == gp.GRB.INFEASIBLE:
                 model.computeIIS()
                 if model.getVars()[0].IISUB:
